@@ -36,6 +36,31 @@ Example response:
 }
 ```
 
+Events:
+
+GET /events
+
+Optional query params:
+- limit (default 50, max 100)
+- model_version (filter)
+
+Example:
+`/events?limit=10&model_version=v1.0`
+
+Example response:
+```json
+[
+  {
+    "event_id": "uuid",
+    "timestamp": "2026-01-14T05:31:49.868613+00:00",
+    "model_version": "v1.0",
+    "latency_ms": 3.54,
+    "input_preview": "{\"sepal_length\": 5.1, ...}",
+    "output_preview": "{\"prediction\": 0}"
+  }
+]
+```
+
 ## Train baseline model (Ticket 2)
 
 ```bash
@@ -80,3 +105,9 @@ Outputs:
 - Added a `/predict` endpoint that validates input and runs model inference
 - Loads the model artifact once at startup for consistent performance
 - Logs each prediction to SQLite with event ID, timestamp, version, and latency
+
+## What has been done in Ticket 5 part
+
+- Added a `/events` endpoint to inspect recent prediction events
+- Supports limit and optional model version filtering
+- Returns lightweight previews for quick debugging and demo use

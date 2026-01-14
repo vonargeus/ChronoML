@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel, Field
 
 from db.init_db import DB_PATH, init_db
@@ -42,6 +42,19 @@ class PredictionResponse(BaseModel):
     prediction: int
 
 
+class EventPreview(BaseModel):
+    event_id: str
+    timestamp: str
+    model_version: str
+    latency_ms: float
+    input_preview: str
+    output_preview: str
+
+
+MAX_EVENT_LIMIT = 100
+PREVIEW_LENGTH = 120
+
+
 def load_metadata(meta_path: Path) -> dict:
     return json.loads(meta_path.read_text())
 
@@ -61,6 +74,12 @@ def get_git_commit(repo_root: Path) -> str:
         if ref_path.exists():
             return ref_path.read_text().strip()
     return head
+
+
+def preview_json(value: str) -> str:
+    if len(value) <= PREVIEW_LENGTH:
+        return value
+    return f"{value[:PREVIEW_LENGTH - 3]}..."
 
 
 @app.on_event("startup")
@@ -128,6 +147,38 @@ def predict(payload: PredictionRequest) -> PredictionResponse:
         model_version=model_version,
         prediction=prediction,
     )
+
+
+@app.get("/events", response_model=list[EventPreview])
+def list_events(
+    limit: int = Query(50, ge=1, le=MAX_EVENT_LIMIT),
+    model_version: str | None = Query(default=None),
+) -> list[EventPreview]:
+    base_query = """
+        SELECT event_id, timestamp, model_version, latency_ms, input_json, output_json
+        FROM prediction_events
+    """
+    params: list[object] = []
+    if model_version:
+        base_query += " WHERE model_version = ?"
+        params.append(model_version)
+    base_query += " ORDER BY timestamp DESC LIMIT ?;"
+    params.append(limit)
+
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(base_query, params).fetchall()
+
+    return [
+        EventPreview(
+            event_id=row[0],
+            timestamp=row[1],
+            model_version=row[2],
+            latency_ms=row[3],
+            input_preview=preview_json(row[4]),
+            output_preview=preview_json(row[5]),
+        )
+        for row in rows
+    ]
 
 
 if __name__ == "__main__":
