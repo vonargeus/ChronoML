@@ -33,6 +33,6 @@ Outputs:
 ## What has been done in Ticket 2 part
 
 - Added a baseline training script in `model/train_baseline.py`
-- Uses scikit-learn on the Iris dataset to train a LogisticRegression model
+- Uses scikit-learn on the Iris dataset to train a RandomForestClassifier model
 - Saves the trained model to `artifacts/model_v1.pkl`
 - Writes metadata to `artifacts/model_v1_meta.json` with version, timestamp, features, and accuracy
