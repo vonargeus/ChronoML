@@ -1,0 +1,24 @@
+{
+  "model_version": "v2.0",
+  "training_timestamp": "2026-01-14T06:38:45.782350+00:00",
+  "features": [
+    "sepal length (cm)",
+    "sepal width (cm)",
+    "petal length (cm)",
+    "petal width (cm)"
+  ],
+  "metrics": {
+    "accuracy": 1.0
+  },
+  "model_type": "RandomForestClassifier",
+  "dataset": "iris",
+  "random_state": 7,
+  "params": {
+    "n_estimators": 200
+  },
+  "training_context": {
+    "dataset": "iris",
+    "test_size": 0.2,
+    "stratify": true
+  }
+}

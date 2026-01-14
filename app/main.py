@@ -17,8 +17,7 @@ app = FastAPI(title="ChronoML", version="0.1.0")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS_DIR = REPO_ROOT / "artifacts"
-MODEL_PATH = ARTIFACTS_DIR / "model_v1.pkl"
-META_PATH = ARTIFACTS_DIR / "model_v1_meta.json"
+DEFAULT_MODEL_VERSION = "v1.0"
 
 
 class PredictionRequest(BaseModel):
@@ -82,11 +81,32 @@ def preview_json(value: str) -> str:
     return f"{value[:PREVIEW_LENGTH - 3]}..."
 
 
+def normalize_version(version: str) -> str:
+    normalized = version.strip()
+    if normalized.startswith("v"):
+        normalized = normalized[1:]
+    major = normalized.split(".", 1)[0]
+    return f"v{major}"
+
+
+def get_artifact_paths(version: str) -> tuple[Path, Path]:
+    version_tag = normalize_version(version)
+    model_path = ARTIFACTS_DIR / f"model_{version_tag}.pkl"
+    meta_path = ARTIFACTS_DIR / f"model_{version_tag}_meta.json"
+    return model_path, meta_path
+
+
 @app.on_event("startup")
 def startup() -> None:
     init_db()
-    app.state.model = joblib.load(MODEL_PATH)
-    app.state.model_meta = load_metadata(META_PATH)
+    active_version = os.getenv("MODEL_ACTIVE_VERSION", DEFAULT_MODEL_VERSION)
+    model_path, meta_path = get_artifact_paths(active_version)
+    if not model_path.exists() or not meta_path.exists():
+        raise FileNotFoundError(
+            f"Missing artifacts for {active_version}: {model_path}, {meta_path}"
+        )
+    app.state.model = joblib.load(model_path)
+    app.state.model_meta = load_metadata(meta_path)
     app.state.git_commit = get_git_commit(REPO_ROOT)
 
 

@@ -71,6 +71,23 @@ Outputs:
 - artifacts/model_v1.pkl
 - artifacts/model_v1_meta.json
 
+## Train model v2 (Ticket 6)
+
+```bash
+python -m model.train_baseline --version v2.0 --random-state 7 --n-estimators 200
+```
+
+Outputs:
+- artifacts/model_v2.pkl
+- artifacts/model_v2_meta.json
+
+Select active model version at runtime:
+
+```powershell
+$env:MODEL_ACTIVE_VERSION="v2.0"
+uvicorn app.main:app --reload
+```
+
 ## Initialize database (Ticket 3)
 
 ```bash
@@ -111,3 +128,9 @@ Outputs:
 - Added a `/events` endpoint to inspect recent prediction events
 - Supports limit and optional model version filtering
 - Returns lightweight previews for quick debugging and demo use
+
+## What has been done in Ticket 6 part
+
+- Added model versioning support using `MODEL_ACTIVE_VERSION`
+- Updated training script to produce versioned artifacts (v1/v2)
+- Added docs for training and switching active model version
