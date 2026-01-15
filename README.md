@@ -1,223 +1,179 @@
 # ChronoML
 
-Local ML decision logging + replay system (learning project).
+<p align="center">
+  <img alt="CI" src="https://github.com/vonargeus/ChronoML/actions/workflows/tests.yml/badge.svg" />
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10-blue" />
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115-009688" />
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ed" />
+</p>
 
-## Run locally
+ChronoML is a small ML service that logs every prediction as an immutable
+event and can replay historical decisions using the exact model version that
+produced them. It is built as a learning project to explore traceability and
+reproducibility in real production workflows.
 
+## Why ChronoML
+
+In production ML systems, models, code, and data evolve independently.
+When a prediction looks wrong, it is hard to answer: Which model did this?
+What input did it see? Can we reproduce the output today? ChronoML focuses on
+capturing those answers early so debugging and auditing are possible later.
+
+## Architecture (high level)
+
+| Component | Purpose |
+| --- | --- |
+| app/ | FastAPI layer exposing /predict, /events, /replay |
+| model/ | Training script that produces versioned artifacts |
+| artifacts/ | Saved model files and metadata (immutable outputs) |
+| db/ | SQLite schema and retention cleanup for prediction events |
+| tests/ | Pytest coverage for prediction, replay, validation |
+
+## How prediction logging works
+
+1) /predict validates input with Pydantic.
+2) The active model artifact is loaded at startup.
+3) The model runs inference and latency is measured.
+4) A prediction_events row is written to SQLite with:
+   event_id, timestamp, model_version, git_commit, data_version,
+   input_json, output_json, latency_ms.
+
+## How replay works
+
+/replay/{event_id} fetches the stored event, loads the model artifact referenced
+by that event, and re-runs inference using the stored input JSON. The response
+includes the original output, the replayed output, and a boolean match flag.
+
+Why mismatches can occur:
+- The wrong model version is loaded.
+- Input schema changed or stored JSON is invalid.
+- Non-determinism or different preprocessing in future versions.
+- Retention removed the event, so replay is no longer possible.
+
+## API examples
+
+Predict:
+```bash
+curl -X POST http://127.0.0.1:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
+```
+
+Events:
+```bash
+curl "http://127.0.0.1:8000/events?limit=5&model_version=v1.0"
+```
+
+Replay:
+```bash
+curl "http://127.0.0.1:8000/replay/<EVENT_ID>"
+```
+
+## Quickstart
+
+Local:
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Health check:
-
+Health:
+```
 GET /health -> {"status":"ok"}
-
-Console UI:
-
-GET / -> basic web UI for health, predict, events, and replay (demo only)
-
-Predict:
-
-POST /predict
-
-Example body:
-```json
-{
-  "sepal_length": 5.1,
-  "sepal_width": 3.5,
-  "petal_length": 1.4,
-  "petal_width": 0.2
-}
 ```
 
-Example response:
-```json
-{
-  "event_id": "uuid",
-  "model_version": "v1.0",
-  "prediction": 0
-}
+Console UI (demo only):
+```
+GET / -> basic UI for health, predict, events, replay
 ```
 
-Events:
-
-GET /events
-
-Optional query params:
-- limit (default 50, max 100)
-- model_version (filter)
-
-Example:
-`/events?limit=10&model_version=v1.0`
-
-Example response:
-```json
-[
-  {
-    "event_id": "uuid",
-    "timestamp": "2026-01-14T05:31:49.868613+00:00",
-    "model_version": "v1.0",
-    "latency_ms": 3.54,
-    "input_preview": "{\"sepal_length\": 5.1, ...}",
-    "output_preview": "{\"prediction\": 0}"
-  }
-]
-```
-
-Replay:
-
-GET /replay/{event_id}
-
-Example response:
-```json
-{
-  "event_id": "uuid",
-  "model_version": "v1.0",
-  "original_output": {"prediction": 0},
-  "replayed_output": {"prediction": 0},
-  "matches": true
-}
-```
-
-## Storage guardrails (Ticket 8)
-
-Max request payload:
-- Env var: `MAX_REQUEST_BYTES` (default 10000)
-- Requests larger than this are rejected with HTTP 413.
-
-Retention policy:
-- Env var: `RETENTION_DAYS` (default 30)
-- Events older than this are deleted at startup.
-- Deleted events can no longer be replayed.
-
-Manual cleanup:
+Docker:
 ```bash
-python -m db.cleanup
+docker build -t chronoml .
+docker run --rm -p 8000:8000 -e MODEL_ACTIVE_VERSION=v1.0 chronoml
 ```
 
-## Tests (Ticket 9)
+The SQLite database file is created at runtime inside the container if missing.
 
-Run:
+## Tests
+
 ```bash
 pytest
 ```
 
-## Docker (Ticket 11)
+## Configuration
 
-Build the image:
-```bash
-docker build -t chronoml .
-```
+- MODEL_ACTIVE_VERSION: choose model version at startup (default v1.0).
+- MAX_REQUEST_BYTES: max request payload size (default 10000).
+- RETENTION_DAYS: delete events older than N days (default 30).
 
-Run the container:
-```bash
-docker run --rm -p 8000:8000 -e MODEL_ACTIVE_VERSION=v1.0 chronoml
-```
+## What this project demonstrates
 
-Notes:
-- The database file is created at runtime inside the container if missing.
-- Events deleted by retention cannot be replayed.
+- ML lifecycle management with versioned artifacts and metadata.
+- Traceability by logging every prediction with code and model version.
+- Reproducibility limits and replay behavior as systems evolve.
+- Basic industrial practices: configuration via env vars, CI with GitHub
+  Actions, and Dockerized deployment.
 
-## Train baseline model (Ticket 2)
+## Progress by Ticket
 
-```bash
-python -m model.train_baseline
-```
+### Ticket 1 — Repository Setup & Project Skeleton
+- Created the project skeleton with `app/`, `model/`, `artifacts/`, `db/`, and `tests/`.
+- Added a minimal FastAPI entrypoint in `app/main.py`.
+- Exposed a `/health` endpoint returning a JSON status payload.
+- Added `requirements.txt` with FastAPI + Uvicorn dependencies.
 
-Outputs:
-- artifacts/model_v1.pkl
-- artifacts/model_v1_meta.json
+### Ticket 2 — Train Baseline ML Model (v1.0)
+- Added a baseline training script in `model/train_baseline.py`.
+- Uses scikit-learn on the Iris dataset to train a RandomForestClassifier model.
+- Saves the trained model to `artifacts/model_v1.pkl`.
+- Writes metadata to `artifacts/model_v1_meta.json` with version, timestamp, features, and accuracy.
 
-## Train model v2 (Ticket 6)
+### Ticket 3 — SQLite Database Schema (The Memory)
+- Added a SQLite initialization script in `db/init_db.py`.
+- Creates the `prediction_events` table with required fields for immutable logging.
+- Writes the database file to `db/chronoml.db`.
 
-```bash
-python -m model.train_baseline --version v2.0 --random-state 7 --n-estimators 200
-```
+### Ticket 4 — /predict Endpoint (Inference + Logging)
+- Added a `/predict` endpoint that validates input and runs model inference.
+- Loads the model artifact once at startup for consistent performance.
+- Logs each prediction to SQLite with event ID, timestamp, version, and latency.
 
-Outputs:
-- artifacts/model_v2.pkl
-- artifacts/model_v2_meta.json
+### Ticket 5 — /events Endpoint (Observability)
+- Added a `/events` endpoint to inspect recent prediction events.
+- Supports limit and optional model version filtering.
+- Returns lightweight previews for quick debugging and demo use.
 
-Select active model version at runtime:
+### Ticket 6 — Model Versioning (v2.0)
+- Added model versioning support using `MODEL_ACTIVE_VERSION`.
+- Updated training script to produce versioned artifacts (v1/v2).
+- Added docs for training and switching active model version.
 
-```powershell
-$env:MODEL_ACTIVE_VERSION="v2.0"
-uvicorn app.main:app --reload
-```
+### Ticket 7 — /replay/{event_id} Endpoint (Core Feature)
+- Added a `/replay/{event_id}` endpoint to re-run historical predictions.
+- Loads the exact model artifact used at the time of the event.
+- Returns original vs replayed output and a match flag.
 
-## Initialize database (Ticket 3)
+### Ticket 8 — Storage Guardrails
+- Added request size limits to prevent oversized payloads.
+- Added a retention cleanup routine for old prediction events.
+- Documented guardrails and their impact on replay.
 
-```bash
-python -m db.init_db
-```
+### Ticket 9 — Automated Tests
+- Added pytest coverage for /predict, /replay, and invalid request handling.
+- Tests run against an isolated SQLite database.
+- Validates replay uses the historical model artifact.
 
-Outputs:
-- db/chronoml.db
+### Ticket 10 — CI Pipeline
+- Added a GitHub Actions workflow to run pytest on pushes and pull requests.
+- Pinned the CI Python version to 3.10 for consistent runs.
 
-## What has been done in Ticket 1 part
+### Ticket 11 — Dockerization
+- Added a Dockerfile that runs the FastAPI app on 0.0.0.0:8000.
+- Added a .dockerignore to keep local env, caches, and DB files out of images.
+- Added a minimal console UI at `/` for quick manual demos.
 
-- Created the project skeleton with `app/`, `model/`, `artifacts/`, `db/`, and `tests/`
-- Added a minimal FastAPI entrypoint in `app/main.py`
-- Exposed a `/health` endpoint returning a JSON status payload
-- Added `requirements.txt` with FastAPI + Uvicorn dependencies
-
-## What has been done in Ticket 2 part
-
-- Added a baseline training script in `model/train_baseline.py`
-- Uses scikit-learn on the Iris dataset to train a RandomForestClassifier model
-- Saves the trained model to `artifacts/model_v1.pkl`
-- Writes metadata to `artifacts/model_v1_meta.json` with version, timestamp, features, and accuracy
-
-## What has been done in Ticket 3 part
-
-- Added a SQLite initialization script in `db/init_db.py`
-- Creates the `prediction_events` table with required fields for immutable logging
-- Writes the database file to `db/chronoml.db`
-
-## What has been done in Ticket 4 part
-
-- Added a `/predict` endpoint that validates input and runs model inference
-- Loads the model artifact once at startup for consistent performance
-- Logs each prediction to SQLite with event ID, timestamp, version, and latency
-
-## What has been done in Ticket 5 part
-
-- Added a `/events` endpoint to inspect recent prediction events
-- Supports limit and optional model version filtering
-- Returns lightweight previews for quick debugging and demo use
-
-## What has been done in Ticket 6 part
-
-- Added model versioning support using `MODEL_ACTIVE_VERSION`
-- Updated training script to produce versioned artifacts (v1/v2)
-- Added docs for training and switching active model version
-
-## What has been done in Ticket 7 part
-
-- Added a `/replay/{event_id}` endpoint to re-run historical predictions
-- Loads the exact model artifact used at the time of the event
-- Returns original vs replayed output and a match flag
-
-## What has been done in Ticket 8 part
-
-- Added request size limits to prevent oversized payloads
-- Added a retention cleanup routine for old prediction events
-- Documented guardrails and their impact on replay
-
-## What has been done in Ticket 9 part
-
-- Added pytest coverage for /predict, /replay, and invalid request handling
-- Tests run against an isolated SQLite database
-- Validates replay uses the historical model artifact
-
-## What has been done in Ticket 10 part
-
-- Added a GitHub Actions workflow to run pytest on pushes and pull requests
-- Pinned the CI Python version to 3.10 for consistent runs
-
-## What has been done in Ticket 11 part
-
-- Added a Dockerfile that runs the FastAPI app on 0.0.0.0:8000
-- Added a .dockerignore to keep local env, caches, and DB files out of images
-- Added a minimal console UI at `/` for quick manual demos
+### Ticket 12 — README (CV-Ready Documentation)
+- Rewrote the README to explain motivation, architecture, and learning goals.
+- Documented prediction logging, replay flow, and mismatch causes.
+- Added concise API examples plus CI, Docker, and configuration notes.
