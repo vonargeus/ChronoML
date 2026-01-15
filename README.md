@@ -13,6 +13,10 @@ Health check:
 
 GET /health -> {"status":"ok"}
 
+Console UI:
+
+GET / -> basic web UI for health, predict, events, and replay (demo only)
+
 Predict:
 
 POST /predict
@@ -98,6 +102,22 @@ Run:
 ```bash
 pytest
 ```
+
+## Docker (Ticket 11)
+
+Build the image:
+```bash
+docker build -t chronoml .
+```
+
+Run the container:
+```bash
+docker run --rm -p 8000:8000 -e MODEL_ACTIVE_VERSION=v1.0 chronoml
+```
+
+Notes:
+- The database file is created at runtime inside the container if missing.
+- Events deleted by retention cannot be replayed.
 
 ## Train baseline model (Ticket 2)
 
@@ -195,3 +215,9 @@ Outputs:
 
 - Added a GitHub Actions workflow to run pytest on pushes and pull requests
 - Pinned the CI Python version to 3.10 for consistent runs
+
+## What has been done in Ticket 11 part
+
+- Added a Dockerfile that runs the FastAPI app on 0.0.0.0:8000
+- Added a .dockerignore to keep local env, caches, and DB files out of images
+- Added a minimal console UI at `/` for quick manual demos

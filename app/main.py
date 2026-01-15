@@ -1,9 +1,9 @@
 """FastAPI entrypoint for ChronoML. This module wires HTTP routes, loads the
 active model at startup, and coordinates inference, logging, events, and
-replay. It enforces request size limits, applies retention cleanup, and
-records prediction events in SQLite with metadata for traceability. Keeping
-this logic here makes deployment and debugging straightforward, while leaving
-model training and database schema to their own packages."""
+replay. It also serves a minimal demo UI at `/` for manual testing. The app
+enforces request size limits, applies retention cleanup, and records events in
+SQLite with metadata for traceability. Keeping this logic here makes
+deployment straightforward while keeping training and storage elsewhere."""
 
 import json
 import os
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import joblib
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from db.cleanup import cleanup_old_events
@@ -166,6 +166,260 @@ app = FastAPI(title="ChronoML", version="0.1.0", lifespan=lifespan)
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/", response_class=HTMLResponse)
+def home() -> str:
+    """Simple demo console for ChronoML. It lets users check health, send
+    predictions, list recent events, and replay by event ID, so behavior is
+    visible without external tools during local testing."""
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ChronoML Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f7f1e8;
+      --ink: #1a1a1a;
+      --muted: #6b6b6b;
+      --accent: #e4572e;
+      --accent-2: #2e86ab;
+      --card: #ffffff;
+      --shadow: rgba(0, 0, 0, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(1200px 800px at 10% -20%, #ffe7d6, transparent),
+                  radial-gradient(900px 700px at 90% 10%, #d6f1ff, transparent),
+                  var(--bg);
+    }
+    header {
+      padding: 40px 24px 8px;
+      text-align: center;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 36px;
+      letter-spacing: -0.02em;
+    }
+    header p {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      animation: rise 450ms ease-out;
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .card {
+      background: var(--card);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 8px 20px var(--shadow);
+    }
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    input, button {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #e5e0d8;
+      font-family: inherit;
+      font-size: 14px;
+    }
+    button {
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      font-weight: 600;
+    }
+    button.secondary {
+      background: var(--accent-2);
+    }
+    pre {
+      background: #111;
+      color: #dfe7ef;
+      padding: 12px;
+      border-radius: 10px;
+      overflow: auto;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      min-height: 80px;
+    }
+    .status {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      background: #f0ebe3;
+      color: var(--ink);
+    }
+    .footer {
+      text-align: center;
+      padding: 18px 0 30px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ChronoML Console</h1>
+    <p>Quick manual panel for health, prediction, events, and replay.</p>
+  </header>
+  <main class="container">
+    <section class="card">
+      <h2>Health</h2>
+      <button id="healthBtn">Check /health</button>
+      <div class="status" id="healthStatus">No check yet.</div>
+    </section>
+
+    <section class="card">
+      <h2>Predict</h2>
+      <div class="row">
+        <div>
+          <label>sepal_length</label>
+          <input id="sepal_length" type="number" step="0.1" value="5.1" />
+        </div>
+        <div>
+          <label>sepal_width</label>
+          <input id="sepal_width" type="number" step="0.1" value="3.5" />
+        </div>
+        <div>
+          <label>petal_length</label>
+          <input id="petal_length" type="number" step="0.1" value="1.4" />
+        </div>
+        <div>
+          <label>petal_width</label>
+          <input id="petal_width" type="number" step="0.1" value="0.2" />
+        </div>
+      </div>
+      <button id="predictBtn" style="margin-top: 10px;">POST /predict</button>
+      <pre id="predictOut">{}</pre>
+    </section>
+
+    <section class="card">
+      <h2>Events</h2>
+      <div class="row">
+        <div>
+          <label>limit</label>
+          <input id="eventsLimit" type="number" value="5" />
+        </div>
+        <div>
+          <label>model_version (optional)</label>
+          <input id="eventsVersion" type="text" placeholder="v1.0" />
+        </div>
+      </div>
+      <button id="eventsBtn" class="secondary" style="margin-top: 10px;">GET /events</button>
+      <pre id="eventsOut">[]</pre>
+    </section>
+
+    <section class="card">
+      <h2>Replay</h2>
+      <label>event_id</label>
+      <input id="replayId" type="text" placeholder="paste event id" />
+      <button id="replayBtn" class="secondary" style="margin-top: 10px;">GET /replay</button>
+      <pre id="replayOut">{}</pre>
+    </section>
+  </main>
+  <div class="footer">
+    <span class="badge">API: /health, /predict, /events, /replay</span>
+  </div>
+  <script>
+    const healthBtn = document.getElementById("healthBtn");
+    const predictBtn = document.getElementById("predictBtn");
+    const eventsBtn = document.getElementById("eventsBtn");
+    const replayBtn = document.getElementById("replayBtn");
+
+    const healthStatus = document.getElementById("healthStatus");
+    const predictOut = document.getElementById("predictOut");
+    const eventsOut = document.getElementById("eventsOut");
+    const replayOut = document.getElementById("replayOut");
+
+    function renderJson(target, data) {
+      target.textContent = JSON.stringify(data, null, 2);
+    }
+
+    healthBtn.addEventListener("click", async () => {
+      healthStatus.textContent = "Checking...";
+      const res = await fetch("/health");
+      const data = await res.json();
+      healthStatus.textContent = data.status === "ok" ? "Healthy" : "Not ready";
+    });
+
+    predictBtn.addEventListener("click", async () => {
+      const payload = {
+        sepal_length: parseFloat(document.getElementById("sepal_length").value),
+        sepal_width: parseFloat(document.getElementById("sepal_width").value),
+        petal_length: parseFloat(document.getElementById("petal_length").value),
+        petal_width: parseFloat(document.getElementById("petal_width").value),
+      };
+      const res = await fetch("/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      renderJson(predictOut, data);
+    });
+
+    eventsBtn.addEventListener("click", async () => {
+      const limit = document.getElementById("eventsLimit").value || "5";
+      const version = document.getElementById("eventsVersion").value.trim();
+      const params = new URLSearchParams({ limit });
+      if (version) params.append("model_version", version);
+      const res = await fetch(`/events?${params.toString()}`);
+      const data = await res.json();
+      renderJson(eventsOut, data);
+    });
+
+    replayBtn.addEventListener("click", async () => {
+      const eventId = document.getElementById("replayId").value.trim();
+      if (!eventId) {
+        renderJson(replayOut, { error: "event_id is required" });
+        return;
+      }
+      const res = await fetch(`/replay/${eventId}`);
+      const data = await res.json();
+      renderJson(replayOut, data);
+    });
+  </script>
+</body>
+</html>
+"""
 
 
 @app.middleware("http")
