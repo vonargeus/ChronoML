@@ -1,3 +1,10 @@
+"""FastAPI entrypoint for ChronoML. This module wires HTTP routes, loads the
+active model at startup, and coordinates inference, logging, events, and
+replay. It enforces request size limits, applies retention cleanup, and
+records prediction events in SQLite with metadata for traceability. Keeping
+this logic here makes deployment and debugging straightforward, while leaving
+model training and database schema to their own packages."""
+
 import json
 import os
 import sqlite3
@@ -8,8 +15,10 @@ from pathlib import Path
 
 import joblib
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from db.cleanup import cleanup_old_events
 from db.init_db import DB_PATH, init_db
 
 app = FastAPI(title="ChronoML", version="0.1.0")
@@ -60,6 +69,14 @@ class ReplayResponse(BaseModel):
 
 MAX_EVENT_LIMIT = 100
 PREVIEW_LENGTH = 120
+MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "40000"))
+DEFAULT_RETENTION_DAYS = 30
+FEATURE_NAME_MAP = {
+    "sepal length (cm)": "sepal_length",
+    "sepal width (cm)": "sepal_width",
+    "petal length (cm)": "petal_length",
+    "petal width (cm)": "petal_width",
+}
 
 
 def load_metadata(meta_path: Path) -> dict:
@@ -104,9 +121,30 @@ def get_artifact_paths(version: str) -> tuple[Path, Path]:
     return model_path, meta_path
 
 
+def get_retention_days() -> int:
+    return int(os.getenv("RETENTION_DAYS", str(DEFAULT_RETENTION_DAYS)))
+
+
+def build_feature_vector(
+    payload: PredictionRequest, feature_order: list[str]
+) -> list[float]:
+    values: list[float] = []
+    for feature in feature_order:
+        field = FEATURE_NAME_MAP.get(feature)
+        if field is None:
+            raise HTTPException(
+                status_code=500, detail=f"Unknown feature in metadata: {feature}"
+            )
+        values.append(getattr(payload, field))
+    return values
+
+
 @app.on_event("startup")
 def startup() -> None:
-    init_db()
+    init_db(DB_PATH)
+    retention_days = get_retention_days()
+    if retention_days > 0:
+        cleanup_old_events(DB_PATH, retention_days)
     active_version = os.getenv("MODEL_ACTIVE_VERSION", DEFAULT_MODEL_VERSION)
     model_path, meta_path = get_artifact_paths(active_version)
     if not model_path.exists() or not meta_path.exists():
@@ -115,12 +153,48 @@ def startup() -> None:
         )
     app.state.model = joblib.load(model_path)
     app.state.model_meta = load_metadata(meta_path)
+    feature_order = app.state.model_meta.get("features")
+    if not feature_order:
+        raise ValueError("Model metadata missing 'features' list")
+    app.state.feature_order = feature_order
     app.state.git_commit = get_git_commit(REPO_ROOT)
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.middleware("http")
+async def enforce_request_size(request, call_next):
+    if request.method in {"POST", "PUT", "PATCH"}:
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > MAX_REQUEST_BYTES:
+                    return JSONResponse(
+                        status_code=413,
+                        content={
+                            "detail": "Request payload too large",
+                            "max_bytes": MAX_REQUEST_BYTES,
+                        },
+                    )
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Invalid Content-Length header"},
+                )
+        body = await request.body()
+        if len(body) > MAX_REQUEST_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "detail": "Request payload too large",
+                    "max_bytes": MAX_REQUEST_BYTES,
+                },
+            )
+        request._body = body
+    return await call_next(request)
 
 
 @app.post("/predict", response_model=PredictionResponse)
@@ -133,7 +207,8 @@ def predict(payload: PredictionRequest) -> PredictionResponse:
 
     start = time.perf_counter()
     #Inference
-    prediction = int(model.predict([payload.to_features()])[0])
+    feature_vector = build_feature_vector(payload, app.state.feature_order)
+    prediction = int(model.predict([feature_vector])[0])
     latency_ms = (time.perf_counter() - start) * 1000
 
     event_id = str(uuid.uuid4())
@@ -229,34 +304,41 @@ def replay_event(event_id: str) -> ReplayResponse:
     if not model_path.exists() or not meta_path.exists():
         raise HTTPException(
             status_code=404,
-            detail=f"Model artifacts for {model_version} not found",
+            detail=f"Model artifacts missing for version {model_version}",
         )
 
     try:
         input_payload = json.loads(input_json)
     except json.JSONDecodeError as exc:
         raise HTTPException(
-            status_code=500, detail="Stored input JSON is invalid"
+            status_code=500, detail="Stored input JSON is invalid JSON"
         ) from exc
 
     try:
         payload = PredictionRequest(**input_payload)
     except ValidationError as exc:
         raise HTTPException(
-            status_code=500, detail="Stored input JSON does not match schema"
+            status_code=500, detail="Stored input JSON failed schema validation"
         ) from exc
-
+    model_meta = load_metadata(meta_path)
+    feature_order = model_meta.get("features")
+    if not feature_order:
+        raise HTTPException(
+            status_code=500, detail="Model metadata missing 'features' list"
+        )
     model = joblib.load(model_path)
-    prediction = int(model.predict([payload.to_features()])[0])
+    feature_vector = build_feature_vector(payload, feature_order)
+    prediction = int(model.predict([feature_vector])[0])
     replayed_output = {"prediction": prediction}
 
     try:
         original_output = json.loads(output_json)
     except json.JSONDecodeError as exc:
         raise HTTPException(
-            status_code=500, detail="Stored output JSON is invalid"
+            status_code=500, detail="Stored output JSON is invalid JSON"
         ) from exc
 
+    # Match rule: compare the same output shape returned by /predict (label only).
     matches = original_output == replayed_output
     return ReplayResponse(
         event_id=stored_event_id,

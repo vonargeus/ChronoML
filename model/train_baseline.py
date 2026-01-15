@@ -1,3 +1,10 @@
+"""Train baseline ML models and export versioned artifacts with metadata. The
+script uses the Iris dataset and RandomForest with configurable seed and tree
+count, then writes a model pickle plus a JSON metadata file describing
+version, features, metrics, and training context. This provides reproducible
+inputs for the API and a clear record of how each model was created, which is
+essential for debugging and replay."""
+
 import argparse
 import json
 from datetime import datetime, timezone

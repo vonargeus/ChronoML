@@ -76,6 +76,29 @@ Example response:
 }
 ```
 
+## Storage guardrails (Ticket 8)
+
+Max request payload:
+- Env var: `MAX_REQUEST_BYTES` (default 10000)
+- Requests larger than this are rejected with HTTP 413.
+
+Retention policy:
+- Env var: `RETENTION_DAYS` (default 30)
+- Events older than this are deleted at startup.
+- Deleted events can no longer be replayed.
+
+Manual cleanup:
+```bash
+python -m db.cleanup
+```
+
+## Tests (Ticket 9)
+
+Run:
+```bash
+pytest
+```
+
 ## Train baseline model (Ticket 2)
 
 ```bash
@@ -155,3 +178,15 @@ Outputs:
 - Added a `/replay/{event_id}` endpoint to re-run historical predictions
 - Loads the exact model artifact used at the time of the event
 - Returns original vs replayed output and a match flag
+
+## What has been done in Ticket 8 part
+
+- Added request size limits to prevent oversized payloads
+- Added a retention cleanup routine for old prediction events
+- Documented guardrails and their impact on replay
+
+## What has been done in Ticket 9 part
+
+- Added pytest coverage for /predict, /replay, and invalid request handling
+- Tests run against an isolated SQLite database
+- Validates replay uses the historical model artifact
