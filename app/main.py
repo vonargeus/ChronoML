@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
-from fastapi import FastAPI, Query
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field, ValidationError
 
 from db.init_db import DB_PATH, init_db
 
@@ -48,6 +48,14 @@ class EventPreview(BaseModel):
     latency_ms: float
     input_preview: str
     output_preview: str
+
+
+class ReplayResponse(BaseModel):
+    event_id: str
+    model_version: str
+    original_output: dict
+    replayed_output: dict
+    matches: bool
 
 
 MAX_EVENT_LIMIT = 100
@@ -199,6 +207,64 @@ def list_events(
         )
         for row in rows
     ]
+
+
+@app.get("/replay/{event_id}", response_model=ReplayResponse)
+def replay_event(event_id: str) -> ReplayResponse:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            """
+            SELECT event_id, model_version, input_json, output_json
+            FROM prediction_events
+            WHERE event_id = ?;
+            """,
+            (event_id,),
+        ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+
+    stored_event_id, model_version, input_json, output_json = row
+    model_path, meta_path = get_artifact_paths(model_version)
+    if not model_path.exists() or not meta_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model artifacts for {model_version} not found",
+        )
+
+    try:
+        input_payload = json.loads(input_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=500, detail="Stored input JSON is invalid"
+        ) from exc
+
+    try:
+        payload = PredictionRequest(**input_payload)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=500, detail="Stored input JSON does not match schema"
+        ) from exc
+
+    model = joblib.load(model_path)
+    prediction = int(model.predict([payload.to_features()])[0])
+    replayed_output = {"prediction": prediction}
+
+    try:
+        original_output = json.loads(output_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=500, detail="Stored output JSON is invalid"
+        ) from exc
+
+    matches = original_output == replayed_output
+    return ReplayResponse(
+        event_id=stored_event_id,
+        model_version=model_version,
+        original_output=original_output,
+        replayed_output=replayed_output,
+        matches=matches,
+    )
 
 
 if __name__ == "__main__":

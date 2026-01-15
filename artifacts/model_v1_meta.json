@@ -1,6 +1,6 @@
 {
   "model_version": "v1.0",
-  "training_timestamp": "2026-01-12T16:57:43.296102+00:00",
+  "training_timestamp": "2026-01-15T04:37:04.415198+00:00",
   "features": [
     "sepal length (cm)",
     "sepal width (cm)",
@@ -15,5 +15,10 @@
   "random_state": 3,
   "params": {
     "n_estimators": 100
+  },
+  "training_context": {
+    "dataset": "iris",
+    "test_size": 0.2,
+    "stratify": true
   }
 }

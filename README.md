@@ -61,6 +61,21 @@ Example response:
 ]
 ```
 
+Replay:
+
+GET /replay/{event_id}
+
+Example response:
+```json
+{
+  "event_id": "uuid",
+  "model_version": "v1.0",
+  "original_output": {"prediction": 0},
+  "replayed_output": {"prediction": 0},
+  "matches": true
+}
+```
+
 ## Train baseline model (Ticket 2)
 
 ```bash
@@ -134,3 +149,9 @@ Outputs:
 - Added model versioning support using `MODEL_ACTIVE_VERSION`
 - Updated training script to produce versioned artifacts (v1/v2)
 - Added docs for training and switching active model version
+
+## What has been done in Ticket 7 part
+
+- Added a `/replay/{event_id}` endpoint to re-run historical predictions
+- Loads the exact model artifact used at the time of the event
+- Returns original vs replayed output and a match flag
