@@ -190,3 +190,8 @@ Outputs:
 - Added pytest coverage for /predict, /replay, and invalid request handling
 - Tests run against an isolated SQLite database
 - Validates replay uses the historical model artifact
+
+## What has been done in Ticket 10 part
+
+- Added a GitHub Actions workflow to run pytest on pushes and pull requests
+- Pinned the CI Python version to 3.10 for consistent runs

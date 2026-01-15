@@ -1,3 +1,4 @@
+#this file YAML configures GitHub Actions to run tests using pytest on push and pull request events
 name: tests
 on:
   push:
