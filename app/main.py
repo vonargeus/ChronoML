@@ -10,6 +10,7 @@ import os
 import sqlite3
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,8 +21,6 @@ from pydantic import BaseModel, Field, ValidationError
 
 from db.cleanup import cleanup_old_events
 from db.init_db import DB_PATH, init_db
-
-app = FastAPI(title="ChronoML", version="0.1.0")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -139,8 +138,8 @@ def build_feature_vector(
     return values
 
 
-@app.on_event("startup")
-def startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     init_db(DB_PATH)
     retention_days = get_retention_days()
     if retention_days > 0:
@@ -158,6 +157,10 @@ def startup() -> None:
         raise ValueError("Model metadata missing 'features' list")
     app.state.feature_order = feature_order
     app.state.git_commit = get_git_commit(REPO_ROOT)
+    yield
+
+
+app = FastAPI(title="ChronoML", version="0.1.0", lifespan=lifespan)
 
 
 @app.get("/health")
